@@ -401,19 +401,35 @@ async function searchGasStationsAlongRoute(encodedPolyline) {
         // Show loading state
         showLoading(true);
         
+        // Get origin coordinates from the current route for detour time calculations
+        let originCoords = null;
+        if (currentRoute && currentRoute.origin) {
+            // For now, we'll skip origin coordinates since they're not essential for basic gas station search
+            // The Google Places API will still work without routing parameters
+            console.log('Route origin available:', currentRoute.origin);
+            console.log('Note: Origin coordinates not included in search (not essential for basic functionality)');
+        }
+        
         // Call our backend API to search for gas stations
+        const requestBody = {
+            textQuery: 'gas station',
+            encodedPolyline: encodedPolyline,
+            maxResultCount: 15,
+            openNow: false,
+            includedType: 'gas_station'
+        };
+        
+        // Only add origin if we have valid coordinates
+        if (originCoords && originCoords.latitude && originCoords.longitude) {
+            requestBody.origin = originCoords;
+        }
+        
         const response = await fetch('/api/places/search', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                textQuery: 'gas station',
-                encodedPolyline: encodedPolyline,
-                maxResultCount: 15,
-                openNow: false,
-                includedType: 'gas_station'
-            })
+            body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
@@ -514,7 +530,7 @@ function displayGasStations(places) {
                     ${place.rating ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">⭐ ${place.rating}/5 (${place.userRatingCount} reviews)</p>` : ''}
                     ${place.isOpen ? '<p style="margin: 0 0 6px 0; color: #34a853; font-size: 14px; font-weight: bold;">🟢 Open Now</p>' : '<p style="margin: 0 0 6px 0; color: #ea4335; font-size: 14px; font-weight: bold;">🔴 Closed</p>'}
                     ${place.priceLevel ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">💰 ${'$'.repeat(place.priceLevel)}</p>` : ''}
-                    ${place.routingSummary ? `<p style="margin: 0 0 6px 0; color: #4285f4; font-size: 14px;">🚗 ${place.routingSummary.distanceMeters}m away</p>` : ''}
+
                 </div>
             `;
             
@@ -580,6 +596,7 @@ function showGasStationsInfo(places) {
                         ${place.rating ? `<span class="station-rating">⭐ ${place.rating}/5</span>` : ''}
                         ${place.isOpen ? '<span class="station-status open">🟢 Open</span>' : '<span class="station-status closed">🔴 Closed</span>'}
                     </div>
+
                 </div>
             `).join('');
             
@@ -592,21 +609,13 @@ function showGasStationsInfo(places) {
 function searchGasStationsManually() {
     console.log('Manual gas station search requested...');
     
-    // Get the current route polyline from the directions renderer
-    const directions = directionsRenderer.getDirections();
-    if (directions && directions.routes && directions.routes.length > 0) {
-        const route = directions.routes[0];
-        const polyline = route.overview_polyline.points;
-        
-        if (polyline) {
-            console.log('Found route polyline, searching for gas stations...');
-            searchGasStationsAlongRoute(polyline);
-        } else {
-            console.log('No polyline found in current route');
-            showError('No route available for gas station search');
-        }
+    // Check if we have the current route data stored
+    if (currentRoute && currentRoute.polyline) {
+        console.log('Found route polyline from current route data, searching for gas stations...');
+        console.log('Using polyline:', currentRoute.polyline.substring(0, 50) + '...');
+        searchGasStationsAlongRoute(currentRoute.polyline);
     } else {
-        console.log('No directions available');
+        console.log('No route data available for gas station search');
         showError('Please plan a route first before searching for gas stations');
     }
 }
@@ -699,6 +708,9 @@ async function findRoute() {
 
         console.log('Route found:', data);
         
+        // Store the current route data for future use
+        currentRoute = data;
+        
         // Display route on map
         displayRoute(data);
         
@@ -748,13 +760,7 @@ function displayRoute(routeData) {
             
             console.log('Route displayed successfully');
             
-            // Automatically search for gas stations along the route
-            if (routeData.polyline) {
-                console.log('Searching for gas stations along the displayed route...');
-                setTimeout(() => {
-                    searchGasStationsAlongRoute(routeData.polyline);
-                }, 1000); // Small delay to ensure route is fully rendered
-            }
+            // Gas station search is now only manual - removed automatic search
             
         } else {
             console.error('Directions service failed:', status);

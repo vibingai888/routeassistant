@@ -221,6 +221,40 @@
             background-color: rgba(231, 76, 60, 0.1);
         }
 
+        /* Detour Information Styling */
+        .detour-info {
+            margin-top: 8px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #4285f4;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .detour-time, .detour-distance, .total-time {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: white;
+            border: 1px solid #e1e1e1;
+        }
+
+        .detour-time {
+            color: #f39c12;
+        }
+
+        .detour-distance {
+            color: #e74c3c;
+        }
+
+        .total-time {
+            color: #4285f4;
+        }
+
         /* Gas Stations Search Button Styling */
         .gas-search-section {
             margin-top: 15px;
@@ -257,6 +291,13 @@
 
         .gas-search-btn span:first-child {
             font-size: 16px;
+        }
+
+        .gas-search-note {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            text-align: center;
         }
 
         /* Google Places Autocomplete Styling */
@@ -396,8 +437,9 @@
                 <!-- Gas Stations Search Button -->
                 <div class="gas-search-section">
                     <button class="gas-search-btn" id="gasSearchBtn" onclick="searchGasStationsManually()">
-                        <span>⛽</span> Find Gas Stations Along Route
+                        <span>⛽</span> Search Gas Stations Along Route
                     </button>
+                    <p class="gas-search-note">Click to find gas stations along your planned route</p>
                 </div>
             </div>
         </div>

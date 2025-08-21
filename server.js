@@ -296,7 +296,7 @@ app.post('/api/places/search', async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.rating,places.userRatingCount,places.currentOpeningHours,places.priceLevel,routingSummary'
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.rating,places.userRatingCount,places.currentOpeningHours,places.priceLevel'
       }
     });
     
@@ -318,7 +318,7 @@ app.post('/api/places/search', async (req, res) => {
         userRatingCount: place.userRatingCount || 0,
         isOpen: place.currentOpeningHours?.openNow || false,
         priceLevel: place.priceLevel || null,
-        routingSummary: place.routingSummary
+
       }));
       
       res.json({
