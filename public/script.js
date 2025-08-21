@@ -4,6 +4,7 @@ let directionsRenderer;
 let currentRoute = null;
 let originMarker = null;
 let destinationMarker = null;
+let gasStationMarkers = [];
 
 // Initialize the map
 function initMap() {
@@ -384,6 +385,232 @@ function addMarker(location, type, label) {
     }
 }
 
+// Function to search for gas stations along the route
+async function searchGasStationsAlongRoute(encodedPolyline) {
+    console.log('Searching for gas stations along the route...');
+    
+    if (!encodedPolyline) {
+        console.log('No route polyline available for gas station search');
+        return;
+    }
+    
+    try {
+        // Clear existing gas station markers
+        clearGasStationMarkers();
+        
+        // Show loading state
+        showLoading(true);
+        
+        // Call our backend API to search for gas stations
+        const response = await fetch('/api/places/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                textQuery: 'gas station',
+                encodedPolyline: encodedPolyline,
+                maxResultCount: 15,
+                openNow: false,
+                includedType: 'gas_station'
+            })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to search for gas stations');
+        }
+
+        console.log(`Found ${data.totalResults} gas stations along the route:`, data.places);
+        
+        // Display gas stations on the map
+        displayGasStations(data.places);
+        
+        // Show gas stations info
+        showGasStationsInfo(data.places);
+        
+    } catch (error) {
+        console.error('Error searching for gas stations:', error);
+        showError('Failed to search for gas stations: ' + error.message);
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Function to display gas stations on the map
+function displayGasStations(places) {
+    console.log('Displaying gas stations on map...');
+    
+    places.forEach((place, index) => {
+        if (place.location && place.location.latitude && place.location.longitude) {
+            console.log(`Adding gas station marker ${index + 1}: ${place.name}`);
+            
+            const latLng = new google.maps.LatLng(place.location.latitude, place.location.longitude);
+            
+            let marker;
+            
+            // Try to use Advanced Markers first, fallback to regular markers
+            if (google.maps.marker && google.maps.marker.AdvancedMarkerElement) {
+                console.log('Using Advanced Marker Element for gas station');
+                
+                // Create custom marker content for gas station
+                const markerContent = document.createElement('div');
+                markerContent.style.cssText = `
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    border: 2px solid white;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: bold;
+                    font-size: 10px;
+                    color: white;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                    background-color: #34a853;
+                `;
+                markerContent.textContent = '⛽';
+                
+                // Create new advanced marker
+                marker = new google.maps.marker.AdvancedMarkerElement({
+                    position: latLng,
+                    map: map,
+                    title: place.name,
+                    content: markerContent
+                });
+                
+            } else {
+                console.log('Advanced Markers not available, using regular Marker for gas station');
+                
+                // Create regular marker with gas station icon
+                const iconUrl = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                    <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="14" cy="14" r="14" fill="#34a853" stroke="#ffffff" stroke-width="2"/>
+                        <text x="14" y="18" text-anchor="middle" fill="white" font-size="12" font-weight="bold">⛽</text>
+                    </svg>
+                `);
+                
+                marker = new google.maps.Marker({
+                    position: latLng,
+                    map: map,
+                    title: place.name,
+                    icon: {
+                        url: iconUrl,
+                        scaledSize: new google.maps.Size(28, 28),
+                        anchor: new google.maps.Point(14, 14)
+                    }
+                });
+            }
+            
+            // Store reference to marker
+            gasStationMarkers.push(marker);
+            
+            // Create info window content
+            const infoContent = `
+                <div style="padding: 12px; min-width: 200px;">
+                    <h3 style="margin: 0 0 8px 0; color: #333; font-size: 16px;">${place.name}</h3>
+                    <p style="margin: 0 0 6px 0; color: #666; font-size: 14px;">${place.address}</p>
+                    ${place.rating ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">⭐ ${place.rating}/5 (${place.userRatingCount} reviews)</p>` : ''}
+                    ${place.isOpen ? '<p style="margin: 0 0 6px 0; color: #34a853; font-size: 14px; font-weight: bold;">🟢 Open Now</p>' : '<p style="margin: 0 0 6px 0; color: #ea4335; font-size: 14px; font-weight: bold;">🔴 Closed</p>'}
+                    ${place.priceLevel ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">💰 ${'$'.repeat(place.priceLevel)}</p>` : ''}
+                    ${place.routingSummary ? `<p style="margin: 0 0 6px 0; color: #4285f4; font-size: 14px;">🚗 ${place.routingSummary.distanceMeters}m away</p>` : ''}
+                </div>
+            `;
+            
+            // Add info window for the marker
+            const infoWindow = new google.maps.InfoWindow({
+                content: infoContent
+            });
+            
+            marker.addListener('click', () => {
+                infoWindow.open(map, marker);
+            });
+        }
+    });
+    
+    console.log(`Displayed ${gasStationMarkers.length} gas station markers on map`);
+}
+
+// Function to clear gas station markers
+function clearGasStationMarkers() {
+    console.log('Clearing existing gas station markers...');
+    
+    gasStationMarkers.forEach(marker => {
+        if (marker.map !== undefined) {
+            marker.map = null; // Advanced Marker
+        } else {
+            marker.setMap(null); // Regular Marker
+        }
+    });
+    
+    gasStationMarkers = [];
+    console.log('Gas station markers cleared');
+}
+
+// Function to show gas stations information
+function showGasStationsInfo(places) {
+    const gasStationsInfo = document.getElementById('gasStationsInfo');
+    
+    if (!gasStationsInfo) {
+        // Create the gas stations info section if it doesn't exist
+        const routeInfo = document.getElementById('routeInfo');
+        if (routeInfo) {
+            const gasStationsSection = document.createElement('div');
+            gasStationsSection.id = 'gasStationsInfo';
+            gasStationsSection.className = 'gas-stations-info';
+            gasStationsSection.innerHTML = `
+                <h3>Gas Stations Along Route</h3>
+                <div class="gas-stations-list" id="gasStationsList"></div>
+            `;
+            routeInfo.appendChild(gasStationsSection);
+        }
+    }
+    
+    const gasStationsList = document.getElementById('gasStationsList');
+    if (gasStationsList) {
+        if (places.length === 0) {
+            gasStationsList.innerHTML = '<p style="color: #666; font-style: italic;">No gas stations found along this route.</p>';
+        } else {
+            const stationsHTML = places.map(place => `
+                <div class="gas-station-item">
+                    <div class="station-name">${place.name}</div>
+                    <div class="station-details">
+                        <span class="station-address">${place.address}</span>
+                        ${place.rating ? `<span class="station-rating">⭐ ${place.rating}/5</span>` : ''}
+                        ${place.isOpen ? '<span class="station-status open">🟢 Open</span>' : '<span class="station-status closed">🔴 Closed</span>'}
+                    </div>
+                </div>
+            `).join('');
+            
+            gasStationsList.innerHTML = stationsHTML;
+        }
+    }
+}
+
+// Function to manually search for gas stations
+function searchGasStationsManually() {
+    console.log('Manual gas station search requested...');
+    
+    // Get the current route polyline from the directions renderer
+    const directions = directionsRenderer.getDirections();
+    if (directions && directions.routes && directions.routes.length > 0) {
+        const route = directions.routes[0];
+        const polyline = route.overview_polyline.points;
+        
+        if (polyline) {
+            console.log('Found route polyline, searching for gas stations...');
+            searchGasStationsAlongRoute(polyline);
+        } else {
+            console.log('No polyline found in current route');
+            showError('No route available for gas station search');
+        }
+    } else {
+        console.log('No directions available');
+        showError('Please plan a route first before searching for gas stations');
+    }
+}
+
 // Find route between origin and destination
 async function findRoute() {
     console.log('Find route function called');
@@ -521,6 +748,14 @@ function displayRoute(routeData) {
             
             console.log('Route displayed successfully');
             
+            // Automatically search for gas stations along the route
+            if (routeData.polyline) {
+                console.log('Searching for gas stations along the displayed route...');
+                setTimeout(() => {
+                    searchGasStationsAlongRoute(routeData.polyline);
+                }, 1000); // Small delay to ensure route is fully rendered
+            }
+            
         } else {
             console.error('Directions service failed:', status);
             showError('Failed to display route on map');
@@ -538,6 +773,15 @@ function showRouteInfo(routeData) {
 // Hide route information
 function hideRouteInfo() {
     document.getElementById('routeInfo').classList.remove('show');
+    
+    // Also clear gas station markers and info
+    clearGasStationMarkers();
+    
+    // Remove gas stations info section if it exists
+    const gasStationsInfo = document.getElementById('gasStationsInfo');
+    if (gasStationsInfo) {
+        gasStationsInfo.remove();
+    }
 }
 
 // Show loading state

@@ -131,6 +131,134 @@
             display: block;
         }
 
+        /* Gas Stations Information Styling */
+        .gas-stations-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #34a853;
+        }
+
+        .gas-stations-info h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .gas-stations-info h3::before {
+            content: '⛽';
+            font-size: 18px;
+        }
+
+        .gas-stations-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .gas-station-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e1e1e1;
+            transition: all 0.2s ease;
+        }
+
+        .gas-station-item:hover {
+            border-color: #34a853;
+            box-shadow: 0 2px 8px rgba(52, 168, 83, 0.1);
+        }
+
+        .gas-station-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .station-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .station-details {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .station-address {
+            color: #666;
+            font-size: 12px;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .station-rating {
+            color: #f39c12;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .station-status {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .station-status.open {
+            color: #27ae60;
+            background-color: rgba(39, 174, 96, 0.1);
+        }
+
+        .station-status.closed {
+            color: #e74c3c;
+            background-color: rgba(231, 76, 60, 0.1);
+        }
+
+        /* Gas Stations Search Button Styling */
+        .gas-search-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e1e1e1;
+        }
+
+        .gas-search-btn {
+            width: 100%;
+            padding: 10px 16px;
+            background: #34a853;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .gas-search-btn:hover {
+            background: #2d8a47;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(52, 168, 83, 0.3);
+        }
+
+        .gas-search-btn:active {
+            transform: translateY(0);
+        }
+
+        .gas-search-btn span:first-child {
+            font-size: 16px;
+        }
+
         /* Google Places Autocomplete Styling */
         .pac-container {
             border-radius: 8px;
@@ -263,6 +391,13 @@
                 <div class="route-details">
                     <span>Duration:</span>
                     <span id="duration">-</span>
+                </div>
+                
+                <!-- Gas Stations Search Button -->
+                <div class="gas-search-section">
+                    <button class="gas-search-btn" id="gasSearchBtn" onclick="searchGasStationsManually()">
+                        <span>⛽</span> Find Gas Stations Along Route
+                    </button>
                 </div>
             </div>
         </div>

@@ -237,6 +237,123 @@ app.post('/api/route/waypoints', async (req, res) => {
   }
 });
 
+// Search places along route endpoint
+app.post('/api/places/search', async (req, res) => {
+  console.log('Places search along route request received:', req.body);
+  
+  try {
+    const { 
+      textQuery, 
+      encodedPolyline, 
+      origin = null, 
+      maxResultCount = 20, 
+      openNow = false,
+      includedType = null 
+    } = req.body;
+    
+    // Validate input
+    if (!textQuery || !encodedPolyline) {
+      console.log('Invalid request: Missing textQuery or encodedPolyline');
+      return res.status(400).json({ 
+        error: 'Text query and encoded polyline are required' 
+      });
+    }
+    
+    console.log(`Searching for "${textQuery}" along route with ${maxResultCount} max results`);
+    
+    // Prepare the request payload for Google Places API Text Search (New)
+    const searchPayload = {
+      textQuery: textQuery,
+      searchAlongRouteParameters: {
+        polyline: {
+          encodedPolyline: encodedPolyline
+        }
+      },
+      maxResultCount: maxResultCount,
+      openNow: openNow
+    };
+    
+    // Add optional parameters if provided
+    if (origin && origin.latitude && origin.longitude) {
+      searchPayload.routingParameters = {
+        origin: {
+          latitude: origin.latitude,
+          longitude: origin.longitude
+        },
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_AWARE_OPTIMAL"
+      };
+    }
+    
+    if (includedType) {
+      searchPayload.includedType = includedType;
+    }
+    
+    console.log('Calling Google Places API Text Search (New)...');
+    
+    // Call Google Places API Text Search (New)
+    const response = await axios.post('https://places.googleapis.com/v1/places:searchText', searchPayload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.rating,places.userRatingCount,places.currentOpeningHours,places.priceLevel,routingSummary'
+      }
+    });
+    
+    console.log('Google Places API response received');
+    
+    const data = response.data;
+    
+    if (data.places && data.places.length > 0) {
+      console.log(`Found ${data.places.length} places along the route`);
+      
+      // Process and format the places data
+      const places = data.places.map(place => ({
+        id: place.id,
+        name: place.displayName?.text || 'Unknown',
+        address: place.formattedAddress || 'Address not available',
+        location: place.location,
+        type: place.primaryType || 'Unknown',
+        rating: place.rating || null,
+        userRatingCount: place.userRatingCount || 0,
+        isOpen: place.currentOpeningHours?.openNow || false,
+        priceLevel: place.priceLevel || null,
+        routingSummary: place.routingSummary
+      }));
+      
+      res.json({
+        query: textQuery,
+        totalResults: places.length,
+        places: places
+      });
+      
+    } else {
+      console.log('No places found along the route');
+      res.json({
+        query: textQuery,
+        totalResults: 0,
+        places: []
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error in places search:', error.message);
+    
+    if (error.response) {
+      console.error('Google Places API error response:', error.response.data);
+      res.status(error.response.status).json({
+        error: 'Google Places API error',
+        details: error.response.data
+      });
+    } else {
+      res.status(500).json({
+        error: 'Internal server error',
+        details: error.message
+      });
+    }
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
@@ -260,6 +377,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`🗺️  Route planning: http://localhost:${PORT}/api/route`);
     console.log(`🔄 Route with waypoints: http://localhost:${PORT}/api/route/waypoints`);
+    console.log(`⛽ Places search along route: http://localhost:${PORT}/api/places/search`);
   });
 }
 
