@@ -91,7 +91,7 @@ async function getIntelligentStops(places, origin, query) {
 You will be given:
 - Start and end location, total route distance/time.
 - A list of candidate places (gas stations, restaurants, charging stations, rest areas, etc.), each with metadata such as:
-  - name, address, rating, userRatingCount, isOpen, detourTime (seconds), detourDistance (meters), directionsUri.
+  - name, address, rating, userRatingCount, isOpen, detourTime (seconds), detourDistance (meters), directionsUri, location (latitude/longitude).
 
 Your task:
 1. Interpret the user's query intent:
@@ -123,6 +123,10 @@ Your task:
           "detourTimeMinutes": 6.5,
           "detourDistanceKm": 2.3,
           "directionsUri": "...",
+          "location": {
+            "latitude": 37.1234,
+            "longitude": -122.5678
+          },
           "reasoning": "Shortest detour with good rating and many reviews."
         }
       ]
@@ -172,6 +176,41 @@ stops list: ${JSON.stringify(places, null, 2)}`;
       if (jsonMatch) {
         const jsonResponse = JSON.parse(jsonMatch[0]);
         console.log('Successfully parsed Gemini JSON response');
+        
+        // Enhance the response by adding missing location data from original places
+        if (jsonResponse.stopsPlan) {
+          jsonResponse.stopsPlan.forEach(segment => {
+            if (segment.recommendedPlaces) {
+              segment.recommendedPlaces.forEach(recommendedPlace => {
+                // Find the original place data to get location and other details
+                const originalPlace = places.find(place => 
+                  place.name === recommendedPlace.name && 
+                  place.address === recommendedPlace.address
+                );
+                
+                if (originalPlace) {
+                  // Add missing data from the original place
+                  recommendedPlace.location = originalPlace.location;
+                  recommendedPlace.id = originalPlace.id;
+                  recommendedPlace.type = originalPlace.type;
+                  recommendedPlace.isOpen = originalPlace.isOpen;
+                  recommendedPlace.priceLevel = originalPlace.priceLevel;
+                  
+                  // Ensure detourTimeMinutes is a number
+                  if (recommendedPlace.detourTimeMinutes && typeof recommendedPlace.detourTimeMinutes === 'string') {
+                    recommendedPlace.detourTimeMinutes = parseFloat(recommendedPlace.detourTimeMinutes);
+                  }
+                  
+                  // Ensure detourDistanceKm is a number
+                  if (recommendedPlace.detourDistanceKm && typeof recommendedPlace.detourDistanceKm === 'string') {
+                    recommendedPlace.detourDistanceKm = parseFloat(recommendedPlace.detourDistanceKm);
+                  }
+                }
+              });
+            }
+          });
+        }
+        
         return jsonResponse;
       } else {
         console.log('No valid JSON found in Gemini response');
@@ -184,9 +223,6 @@ stops list: ${JSON.stringify(places, null, 2)}`;
     
   } catch (error) {
     console.error('Error calling Gemini API:', error.message);
-    if (error.response) {
-      console.error('Gemini API error response:', error.response.data);
-    }
     throw error;
   }
 }
