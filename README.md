@@ -17,6 +17,7 @@ A Node.js backend service that integrates with the Google Maps Platform to provi
 
 - Node.js (v14 or higher)
 - Google Maps API key with Routes API enabled
+- Google Places API enabled (for location search)
 
 ## Setup
 
@@ -46,7 +47,7 @@ A Node.js backend service that integrates with the Google Maps Platform to provi
 4. **Get Google Maps API Key**
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
    - Create a new project or select existing one
-   - Enable the Routes API
+   - Enable the Routes API and Places API
    - Create credentials (API Key)
    - Add the API key to your `.env` file
 
@@ -233,7 +234,7 @@ routeassistant/
 ├── test-frontend.js       # Frontend testing script
 ├── test-api.js            # API testing script
 ├── README.md              # This file
-└── README-FRONTEND.md     # Frontend documentation
+└── ARCHITECTURE.md        # Architecture documentation
 ```
 
 ### Adding New Features
