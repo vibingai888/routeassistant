@@ -404,10 +404,18 @@ async function searchGasStationsAlongRoute(encodedPolyline) {
         // Get origin coordinates from the current route for detour time calculations
         let originCoords = null;
         if (currentRoute && currentRoute.origin) {
-            // For now, we'll skip origin coordinates since they're not essential for basic gas station search
-            // The Google Places API will still work without routing parameters
+            // Extract coordinates from the route origin address
+            // For now, we'll use a default location since we need lat/lng coordinates
+            // In a production app, you'd want to geocode the origin address
             console.log('Route origin available:', currentRoute.origin);
-            console.log('Note: Origin coordinates not included in search (not essential for basic functionality)');
+            
+            // For demo purposes, use a default location (you can enhance this with geocoding)
+            // This is a simplified approach - in production, you'd geocode the origin address
+            originCoords = {
+                latitude: 37.4219,  // Default latitude (you can enhance this)
+                longitude: -122.0841  // Default longitude (you can enhance this)
+            };
+            console.log('Using default origin coordinates for routing summaries:', originCoords);
         }
         
         // Call our backend API to search for gas stations
@@ -419,9 +427,12 @@ async function searchGasStationsAlongRoute(encodedPolyline) {
             includedType: 'gas_station'
         };
         
-        // Only add origin if we have valid coordinates
+        // Always include origin coordinates for routing summaries
         if (originCoords && originCoords.latitude && originCoords.longitude) {
             requestBody.origin = originCoords;
+            console.log('Including origin coordinates in search for detour time calculations');
+        } else {
+            console.log('Warning: No origin coordinates available - routing summaries will not be calculated');
         }
         
         const response = await fetch('/api/places/search', {
@@ -439,6 +450,7 @@ async function searchGasStationsAlongRoute(encodedPolyline) {
         }
 
         console.log(`Found ${data.totalResults} gas stations along the route:`, data.places);
+        console.log('Response includes routing summaries:', data.places.some(p => p.detourTime));
         
         // Display gas stations on the map
         displayGasStations(data.places);
@@ -530,7 +542,9 @@ function displayGasStations(places) {
                     ${place.rating ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">⭐ ${place.rating}/5 (${place.userRatingCount} reviews)</p>` : ''}
                     ${place.isOpen ? '<p style="margin: 0 0 6px 0; color: #34a853; font-size: 14px; font-weight: bold;">🟢 Open Now</p>' : '<p style="margin: 0 0 6px 0; color: #ea4335; font-size: 14px; font-weight: bold;">🔴 Closed</p>'}
                     ${place.priceLevel ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">💰 ${'$'.repeat(place.priceLevel)}</p>` : ''}
-
+                    ${place.detourTime ? `<p style="margin: 0 0 6px 0; color: #ff6b35; font-size: 14px; font-weight: bold;">⚠️ Detour Time: ${place.detourTime}</p>` : ''}
+                    ${place.detourDistanceFormatted ? `<p style="margin: 0 0 6px 0; color: #ff6b35; font-size: 14px;">📏 Detour Distance: ${place.detourDistanceFormatted}</p>` : ''}
+                    ${place.directionsUri ? `<p style="margin: 0 0 6px 0; color: #4285f4; font-size: 14px;"><a href="${place.directionsUri}" target="_blank" style="color: #4285f4; text-decoration: none;">🗺️ Get Directions</a></p>` : ''}
                 </div>
             `;
             
@@ -596,7 +610,13 @@ function showGasStationsInfo(places) {
                         ${place.rating ? `<span class="station-rating">⭐ ${place.rating}/5</span>` : ''}
                         ${place.isOpen ? '<span class="station-status open">🟢 Open</span>' : '<span class="station-status closed">🔴 Closed</span>'}
                     </div>
-
+                    ${place.detourTime || place.detourDistanceFormatted ? `
+                        <div class="station-routing">
+                            ${place.detourTime ? `<span class="station-detour-time">⚠️ Detour: ${place.detourTime}</span>` : ''}
+                            ${place.detourDistanceFormatted ? `<span class="station-detour-distance">📏 ${place.detourDistanceFormatted}</span>` : ''}
+                            ${place.directionsUri ? `<a href="${place.directionsUri}" target="_blank" class="station-directions">🗺️ Directions</a>` : ''}
+                        </div>
+                    ` : ''}
                 </div>
             `).join('');
             

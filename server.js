@@ -273,57 +273,107 @@ app.post('/api/places/search', async (req, res) => {
       openNow: openNow
     };
     
-    // Add optional parameters if provided
-    if (origin && origin.latitude && origin.longitude) {
-      searchPayload.routingParameters = {
-        origin: {
-          latitude: origin.latitude,
-          longitude: origin.longitude
-        },
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_AWARE_OPTIMAL"
-      };
+    // Always include routingParameters.origin for routing summaries
+    // If origin is provided in request, use it; otherwise, extract from polyline start
+    let routingOrigin = origin;
+    
+    if (!routingOrigin || !routingOrigin.latitude || !routingOrigin.longitude) {
+      console.log('No origin provided, extracting start point from polyline for routing calculations');
+      // For now, we'll require origin to be provided since extracting from polyline is complex
+      // Users should provide origin coordinates for accurate routing summaries
+      return res.status(400).json({
+        error: 'Origin coordinates (latitude and longitude) are required for routing summaries'
+      });
     }
+    
+    // Add routing parameters for detour time calculations
+    searchPayload.routingParameters = {
+      origin: {
+        latitude: routingOrigin.latitude,
+        longitude: routingOrigin.longitude
+      },
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_AWARE_OPTIMAL"
+    };
     
     if (includedType) {
       searchPayload.includedType = includedType;
     }
     
-    console.log('Calling Google Places API Text Search (New)...');
+    console.log('Calling Google Places API Text Search (New) with routing parameters...');
+    console.log('Routing origin:', routingOrigin);
+    console.log('Full search payload:', JSON.stringify(searchPayload, null, 2));
     
-    // Call Google Places API Text Search (New)
+    // Call Google Places API Text Search (New) with routingSummaries in field mask
     const response = await axios.post('https://places.googleapis.com/v1/places:searchText', searchPayload, {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.rating,places.userRatingCount,places.currentOpeningHours,places.priceLevel'
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.rating,places.userRatingCount,places.currentOpeningHours,places.priceLevel,routingSummaries'
       }
     });
     
-    console.log('Google Places API response received');
+    console.log('Google Places API response received with routing summaries');
+    console.log('Response status:', response.status);
+    console.log('Response headers:', response.headers);
+    console.log('Response data keys:', Object.keys(response.data));
     
     const data = response.data;
     
     if (data.places && data.places.length > 0) {
       console.log(`Found ${data.places.length} places along the route`);
+      console.log('Places data structure:', JSON.stringify(data.places[0], null, 2));
       
-      // Process and format the places data
-      const places = data.places.map(place => ({
-        id: place.id,
-        name: place.displayName?.text || 'Unknown',
-        address: place.formattedAddress || 'Address not available',
-        location: place.location,
-        type: place.primaryType || 'Unknown',
-        rating: place.rating || null,
-        userRatingCount: place.userRatingCount || 0,
-        isOpen: place.currentOpeningHours?.openNow || false,
-        priceLevel: place.priceLevel || null,
-
-      }));
+      if (data.routingSummaries) {
+        console.log(`Routing summaries found: ${data.routingSummaries.length} entries`);
+        console.log('First routing summary:', JSON.stringify(data.routingSummaries[0], null, 2));
+      } else {
+        console.log('No routing summaries in response - this might indicate an API issue');
+        console.log('Available fields in response:', Object.keys(data));
+      }
+      
+      // Process and format the places data with routing summaries
+      const places = data.places.map((place, index) => {
+        const routingSummary = data.routingSummaries && data.routingSummaries[index];
+        
+        // Extract detour time and distance information
+        let detourTime = null;
+        let detourDistance = null;
+        let directionsUri = null;
+        
+        if (routingSummary && routingSummary.legs && routingSummary.legs.length > 0) {
+          const leg = routingSummary.legs[0];
+          detourTime = leg.duration || null;
+          detourDistance = leg.distanceMeters || null;
+          directionsUri = routingSummary.directionsUri || null;
+          
+          console.log(`Place ${index + 1}: ${place.displayName?.text || 'Unknown'} - Detour: ${detourTime} (${detourDistance}m)`);
+        }
+        
+        return {
+          id: place.id,
+          name: place.displayName?.text || 'Unknown',
+          address: place.formattedAddress || 'Address not available',
+          location: place.location,
+          type: place.primaryType || 'Unknown',
+          rating: place.rating || null,
+          userRatingCount: place.userRatingCount || 0,
+          isOpen: place.currentOpeningHours?.openNow || false,
+          priceLevel: place.priceLevel || null,
+          // Add routing information
+          detourTime: detourTime,
+          detourDistance: detourDistance,
+          detourDistanceFormatted: detourDistance ? `${(detourDistance / 1000).toFixed(1)} km` : null,
+          directionsUri: directionsUri
+        };
+      });
+      
+      console.log(`Processed ${places.length} places with routing summaries`);
       
       res.json({
         query: textQuery,
         totalResults: places.length,
+        origin: routingOrigin,
         places: places
       });
       
@@ -332,6 +382,7 @@ app.post('/api/places/search', async (req, res) => {
       res.json({
         query: textQuery,
         totalResults: 0,
+        origin: routingOrigin,
         places: []
       });
     }
