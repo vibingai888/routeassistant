@@ -505,55 +505,50 @@ async function searchGasStationsBySegments(encodedPolyline, originCoords, totalD
     
     console.log('Route segments created:', segments);
     
-    // Search for gas stations in each segment
-    const allPlaces = [];
-    const segmentResults = [];
+    // Instead of multiple API calls with the same polyline, we'll do one comprehensive search
+    // and then intelligently distribute the results across segments based on detour time
+    console.log('Performing comprehensive search for all segments...');
     
-    for (const segment of segments) {
-        console.log(`Searching segment ${segment.index + 1}: ${segment.startTimeFormatted}`);
+    try {
+        const requestBody = {
+            textQuery: 'gas station',
+            encodedPolyline: encodedPolyline,
+            maxResultCount: Math.min(25, numSegments * 8), // More results for better distribution
+            openNow: false,
+            includedType: 'gas_station'
+        };
         
-        try {
-            // For each segment, we'll search with a focused area
-            // In a real implementation, you might want to create sub-polylines for each segment
-            // For now, we'll use the full polyline but adjust the search parameters
-            
-            const requestBody = {
-                textQuery: 'gas station',
-                encodedPolyline: encodedPolyline,
-                maxResultCount: 8, // Fewer results per segment for better distribution
-                openNow: false,
-                includedType: 'gas_station',
-                segment: segment.index,
-                segmentInfo: {
-                    startTime: segment.startTime,
-                    endTime: segment.endTime,
-                    startTimeFormatted: segment.startTimeFormatted,
-                    endTimeFormatted: segment.endTimeFormatted
-                }
-            };
-            
-            // Always include origin coordinates for routing summaries
-            if (originCoords && originCoords.latitude && originCoords.longitude) {
-                requestBody.origin = originCoords;
-            }
-            
-            const response = await fetch('/api/places/search', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestBody)
-            });
+        // Always include origin coordinates for routing summaries
+        if (originCoords && originCoords.latitude && originCoords.longitude) {
+            requestBody.origin = originCoords;
+        }
+        
+        const response = await fetch('/api/places/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
 
-            const data = await response.json();
+        const data = await response.json();
+        
+        if (response.ok && data.places) {
+            console.log(`Comprehensive search found ${data.places.length} gas stations`);
             
-            if (response.ok && data.places) {
-                console.log(`Segment ${segment.index + 1}: Found ${data.places.length} gas stations`);
+            // Distribute places across segments based on detour time
+            const placesBySegment = distributePlacesAcrossSegments(data.places, segments, totalDurationSeconds);
+            
+            // Add segment information to each place
+            const allPlaces = [];
+            const segmentResults = [];
+            
+            segments.forEach((segment, segmentIndex) => {
+                const segmentPlaces = placesBySegment[segmentIndex] || [];
                 
-                // Add segment information to each place
-                const placesWithSegment = data.places.map(place => ({
+                const placesWithSegment = segmentPlaces.map(place => ({
                     ...place,
-                    segment: segment.index,
+                    segment: segmentIndex,
                     segmentInfo: segment,
                     segmentTimeRange: segment.startTimeFormatted
                 }));
@@ -565,42 +560,113 @@ async function searchGasStationsBySegments(encodedPolyline, originCoords, totalD
                     intelligentStops: data.intelligentStops
                 });
                 
-                // Add a small delay between requests to avoid rate limiting
-                if (segment.index < segments.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                console.log(`Segment ${segmentIndex + 1}: Distributed ${placesWithSegment.length} gas stations`);
+            });
+            
+            console.log(`Total places distributed across all segments: ${allPlaces.length}`);
+            
+            if (allPlaces.length > 0) {
+                // Display all gas stations on the map
+                displayGasStations(allPlaces);
+                
+                // Show gas stations info with segment information
+                showGasStationsInfoWithSegments(allPlaces, segments);
+                
+                // Show intelligent stops from all segments
+                const allIntelligentStops = combineIntelligentStopsFromSegments(segmentResults);
+                if (allIntelligentStops && allIntelligentStops.stopsPlan && allIntelligentStops.stopsPlan.length > 0) {
+                    showIntelligentStops(allIntelligentStops);
                 }
                 
+                // Show segment summary
+                showSegmentSummary(segments, allPlaces);
+                
             } else {
-                console.warn(`Segment ${segment.index + 1}: Search failed or no results`);
+                showError('No gas stations found along any route segment');
             }
             
-        } catch (error) {
-            console.error(`Error searching segment ${segment.index + 1}:`, error);
-            // Continue with other segments even if one fails
+        } else {
+            console.warn('Comprehensive search failed or no results');
+            showError('Failed to search for gas stations along route segments');
+        }
+        
+    } catch (error) {
+        console.error('Error in comprehensive segment search:', error);
+        showError('Failed to search for gas stations: ' + error.message);
+    }
+}
+
+// Function to distribute places across segments based on detour time
+function distributePlacesAcrossSegments(places, segments, totalDurationSeconds) {
+    console.log('Distributing places across segments based on detour time...');
+    
+    // Sort places by detour time (ascending)
+    const sortedPlaces = [...places].sort((a, b) => {
+        const timeA = a.detourTimeMinutes || 0;
+        const timeB = b.detourTimeMinutes || 0;
+        return timeA - timeB;
+    });
+    
+    // Initialize segments with empty arrays
+    const placesBySegment = {};
+    segments.forEach(segment => {
+        placesBySegment[segment.index] = [];
+    });
+    
+    // Distribute places across segments
+    sortedPlaces.forEach((place, index) => {
+        // Calculate which segment this place should belong to based on detour time
+        const detourTimeMinutes = place.detourTimeMinutes || 0;
+        const segmentIndex = Math.min(
+            Math.floor((detourTimeMinutes / (totalDurationSeconds / 60)) * segments.length),
+            segments.length - 1
+        );
+        
+        // Ensure we don't exceed segment capacity
+        const targetSegment = Math.min(segmentIndex, segments.length - 1);
+        placesBySegment[targetSegment].push(place);
+        
+        console.log(`Place "${place.name}" (${detourTimeMinutes} min detour) → Segment ${targetSegment + 1}`);
+    });
+    
+    // Balance segments if some have too many or too few places
+    balanceSegments(placesBySegment, segments);
+    
+    return placesBySegment;
+}
+
+// Function to balance segments for more even distribution
+function balanceSegments(placesBySegment, segments) {
+    console.log('Balancing segments for more even distribution...');
+    
+    const segmentCounts = Object.values(placesBySegment).map(places => places.length);
+    const avgCount = Math.round(segmentCounts.reduce((sum, count) => sum + count, 0) / segments.length);
+    
+    console.log(`Average places per segment: ${avgCount}`);
+    console.log('Segment distribution before balancing:', segmentCounts);
+    
+    // Move places from overpopulated segments to underpopulated ones
+    for (let i = 0; i < segments.length; i++) {
+        const currentCount = placesBySegment[i].length;
+        
+        if (currentCount > avgCount + 2) {
+            // This segment has too many places
+            const excess = currentCount - avgCount;
+            const placesToMove = placesBySegment[i].splice(-excess);
+            
+            // Find segments that need more places
+            for (let j = 0; j < segments.length && placesToMove.length > 0; j++) {
+                if (placesBySegment[j].length < avgCount - 1) {
+                    const placesNeeded = avgCount - placesBySegment[j].length;
+                    const placesToAdd = placesToMove.splice(0, placesNeeded);
+                    placesBySegment[j].push(...placesToAdd);
+                }
+            }
         }
     }
     
-    console.log(`Total places found across all segments: ${allPlaces.length}`);
-    
-    if (allPlaces.length > 0) {
-        // Display all gas stations on the map
-        displayGasStations(allPlaces);
-        
-        // Show gas stations info with segment information
-        showGasStationsInfoWithSegments(allPlaces, segments);
-        
-        // Show intelligent stops from all segments
-        const allIntelligentStops = combineIntelligentStopsFromSegments(segmentResults);
-        if (allIntelligentStops && allIntelligentStops.stopsPlan && allIntelligentStops.stopsPlan.length > 0) {
-            showIntelligentStops(allIntelligentStops);
-        }
-        
-        // Show segment summary
-        showSegmentSummary(segments, allPlaces);
-        
-    } else {
-        showError('No gas stations found along any route segment');
-    }
+    const finalCounts = Object.values(placesBySegment).map(places => places.length);
+    console.log('Segment distribution after balancing:', finalCounts);
 }
 
 // Function to combine intelligent stops from multiple segments

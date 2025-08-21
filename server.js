@@ -94,10 +94,10 @@ You will be given:
   - name, address, rating, userRatingCount, isOpen, detourTime (seconds), detourDistance (meters), directionsUri, location (latitude/longitude).
 
 Your task:
-1. Interpret the user's query intent:
-   - If user asks for "best overall stop" → choose top 1–3 places by balancing criteria.
-   - If user specifies "stops along the way on a long trip" → break the route into segments of ~30–45 minutes and suggest 1–3 good stops in each segment.
-   - If user asks for a specific type (e.g. coffee shops, EV chargers) → apply the same ranking logic to that type only.
+1. Analyze the route and create a comprehensive stops plan:
+   - Break the route into logical segments based on travel time
+   - For each segment, recommend 1-2 optimal places
+   - Ensure recommendations are distributed across the entire route, not clustered in one area
 
 2. Ranking Criteria (order of importance):
    a. Place must be open.  
@@ -106,7 +106,11 @@ Your task:
    d. More user ratings (reliability).  
    e. (Optional) Price level if provided.  
 
-3. Select the best candidates based on the above.
+3. Segment Strategy:
+   - Create segments of 30-45 minutes each
+   - Distribute recommendations evenly across segments
+   - Avoid clustering all recommendations in early segments
+   - Consider the full route length for proper distribution
 
 4. Provide a **structured JSON response** in this format:
 
@@ -415,10 +419,11 @@ app.post('/api/places/search', async (req, res) => {
     const { 
       textQuery, 
       encodedPolyline, 
-      origin = null, 
       maxResultCount = 20, 
-      openNow = false,
-      includedType = null 
+      openNow = false, 
+      includedType = null,
+      segment = null,
+      segmentInfo = null
     } = req.body;
     
     // Validate input
@@ -431,7 +436,7 @@ app.post('/api/places/search', async (req, res) => {
     
     console.log(`Searching for "${textQuery}" along route with ${maxResultCount} max results`);
     
-    // Prepare the request payload for Google Places API Text Search (New)
+    // Build search payload for Google Places API Text Search (New)
     const searchPayload = {
       textQuery: textQuery,
       searchAlongRouteParameters: {
@@ -445,7 +450,7 @@ app.post('/api/places/search', async (req, res) => {
     
     // Always include routingParameters.origin for routing summaries
     // If origin is provided in request, use it; otherwise, extract from polyline start
-    let routingOrigin = origin;
+    let routingOrigin = req.body.origin;
     
     if (!routingOrigin || !routingOrigin.latitude || !routingOrigin.longitude) {
       console.log('No origin provided, extracting start point from polyline for routing calculations');
@@ -468,6 +473,17 @@ app.post('/api/places/search', async (req, res) => {
     
     if (includedType) {
       searchPayload.includedType = includedType;
+    }
+    
+    // If this is a segment-based search, adjust parameters for better diversity
+    if (segment !== null && segmentInfo) {
+      console.log(`Segment-based search for segment ${segment}: ${segmentInfo.startTimeFormatted}`);
+      
+      // Adjust max results for segments to ensure variety
+      searchPayload.maxResultCount = Math.max(maxResultCount, 15);
+      
+      // Add segment context to help with diversity
+      searchPayload.textQuery = `${textQuery} ${segmentInfo.startTimeFormatted} segment`;
     }
     
     console.log('Calling Google Places API Text Search (New) with routing parameters...');
@@ -563,7 +579,9 @@ app.post('/api/places/search', async (req, res) => {
         totalResults: places.length,
         origin: routingOrigin,
         places: places,
-        intelligentStops: intelligentStops
+        intelligentStops: intelligentStops,
+        segment: segment,
+        segmentInfo: segmentInfo
       });
       
     } else {
@@ -573,7 +591,9 @@ app.post('/api/places/search', async (req, res) => {
         totalResults: 0,
         origin: routingOrigin,
         places: [],
-        intelligentStops: null
+        intelligentStops: null,
+        segment: segment,
+        segmentInfo: segmentInfo
       });
     }
     
