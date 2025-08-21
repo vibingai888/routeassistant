@@ -458,6 +458,11 @@ async function searchGasStationsAlongRoute(encodedPolyline) {
         // Show gas stations info
         showGasStationsInfo(data.places);
         
+        // Show intelligent stops if available
+        if (data.intelligentStops) {
+            showIntelligentStops(data.intelligentStops);
+        }
+        
     } catch (error) {
         console.error('Error searching for gas stations:', error);
         showError('Failed to search for gas stations: ' + error.message);
@@ -542,9 +547,13 @@ function displayGasStations(places) {
                     ${place.rating ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">⭐ ${place.rating}/5 (${place.userRatingCount} reviews)</p>` : ''}
                     ${place.isOpen ? '<p style="margin: 0 0 6px 0; color: #34a853; font-size: 14px; font-weight: bold;">🟢 Open Now</p>' : '<p style="margin: 0 0 6px 0; color: #ea4335; font-size: 14px; font-weight: bold;">🔴 Closed</p>'}
                     ${place.priceLevel ? `<p style="margin: 0 0 6px 0; color: #333; font-size: 14px;">💰 ${'$'.repeat(place.priceLevel)}</p>` : ''}
-                    ${place.detourTime ? `<p style="margin: 0 0 6px 0; color: #ff6b35; font-size: 14px; font-weight: bold;">⚠️ Detour Time: ${place.detourTime}</p>` : ''}
-                    ${place.detourDistanceFormatted ? `<p style="margin: 0 0 6px 0; color: #ff6b35; font-size: 14px;">📏 Detour Distance: ${place.detourDistanceFormatted}</p>` : ''}
-                    ${place.directionsUri ? `<p style="margin: 0 0 6px 0; color: #4285f4; font-size: 14px;"><a href="${place.directionsUri}" target="_blank" style="color: #4285f4; text-decoration: none;">🗺️ Get Directions</a></p>` : ''}
+                    ${place.detourTime || place.detourDistanceFormatted ? `
+                        <div class="station-routing">
+                            ${place.detourTimeMinutes ? `<span class="station-detour-time">⚠️ Detour: ${place.detourTimeMinutes} min</span>` : ''}
+                            ${place.detourDistanceFormatted ? `<span class="station-detour-distance">📏 ${place.detourDistanceFormatted}</span>` : ''}
+                            ${place.directionsUri ? `<a href="${place.directionsUri}" target="_blank" class="station-directions">🗺️ Directions</a>` : ''}
+                        </div>
+                    ` : ''}
                 </div>
             `;
             
@@ -612,7 +621,7 @@ function showGasStationsInfo(places) {
                     </div>
                     ${place.detourTime || place.detourDistanceFormatted ? `
                         <div class="station-routing">
-                            ${place.detourTime ? `<span class="station-detour-time">⚠️ Detour: ${place.detourTime}</span>` : ''}
+                            ${place.detourTimeMinutes ? `<span class="station-detour-time">⚠️ Detour: ${place.detourTimeMinutes} min</span>` : ''}
                             ${place.detourDistanceFormatted ? `<span class="station-detour-distance">📏 ${place.detourDistanceFormatted}</span>` : ''}
                             ${place.directionsUri ? `<a href="${place.directionsUri}" target="_blank" class="station-directions">🗺️ Directions</a>` : ''}
                         </div>
@@ -622,6 +631,57 @@ function showGasStationsInfo(places) {
             
             gasStationsList.innerHTML = stationsHTML;
         }
+    }
+}
+
+// Function to show intelligent stops from Gemini API
+function showIntelligentStops(intelligentStops) {
+    if (!intelligentStops || !intelligentStops.stopsPlan) {
+        return;
+    }
+    
+    const gasStationsInfo = document.getElementById('gasStationsInfo');
+    if (!gasStationsInfo) return;
+    
+    // Create intelligent stops section
+    const intelligentStopsSection = document.createElement('div');
+    intelligentStopsSection.id = 'intelligentStopsSection';
+    intelligentStopsSection.className = 'intelligent-stops-section';
+    intelligentStopsSection.innerHTML = `
+        <h3>🤖 AI-Recommended Stops</h3>
+        <div class="intelligent-stops-list" id="intelligentStopsList"></div>
+    `;
+    
+    // Insert before the regular gas stations list
+    const gasStationsList = document.getElementById('gasStationsList');
+    if (gasStationsList) {
+        gasStationsInfo.insertBefore(intelligentStopsSection, gasStationsList);
+    }
+    
+    const intelligentStopsList = document.getElementById('intelligentStopsList');
+    if (intelligentStopsList) {
+        const stopsHTML = intelligentStops.stopsPlan.map(segment => `
+            <div class="segment-item">
+                <h4 class="segment-title">${segment.segment}</h4>
+                <div class="segment-places">
+                    ${segment.recommendedPlaces.map(place => `
+                        <div class="recommended-place">
+                            <div class="place-name">${place.name}</div>
+                            <div class="place-address">${place.address}</div>
+                            <div class="place-details">
+                                ${place.rating ? `<span class="place-rating">⭐ ${place.rating}/5 (${place.userRatingCount} reviews)</span>` : ''}
+                                <span class="place-detour">⚠️ ${place.detourTimeMinutes} min detour</span>
+                                <span class="place-distance">📏 ${place.detourDistanceKm} km</span>
+                            </div>
+                            <div class="place-reasoning">💡 ${place.reasoning}</div>
+                            ${place.directionsUri ? `<a href="${place.directionsUri}" target="_blank" class="place-directions">🗺️ Get Directions</a>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+        
+        intelligentStopsList.innerHTML = stopsHTML;
     }
 }
 
@@ -807,6 +867,12 @@ function hideRouteInfo() {
     const gasStationsInfo = document.getElementById('gasStationsInfo');
     if (gasStationsInfo) {
         gasStationsInfo.remove();
+    }
+    
+    // Remove intelligent stops section if it exists
+    const intelligentStopsSection = document.getElementById('intelligentStopsSection');
+    if (intelligentStopsSection) {
+        intelligentStopsSection.remove();
     }
 }
 

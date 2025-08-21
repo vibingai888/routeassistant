@@ -55,7 +55,141 @@ if (!GOOGLE_MAPS_API_KEY) {
   process.exit(1);
 }
 
+// Gemini API configuration
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  console.log('⚠️  GEMINI_API_KEY not found - intelligent stop selection will be disabled');
+} else {
+  console.log('Gemini API key loaded successfully');
+}
+
 console.log('Google Maps API key loaded successfully');
+
+// Helper function to convert seconds to approximate minutes
+function convertSecondsToMinutes(seconds) {
+  if (!seconds) return null;
+  
+  // Remove 's' suffix if present and convert to number
+  const secondsNum = typeof seconds === 'string' ? parseFloat(seconds.replace('s', '')) : seconds;
+  
+  if (isNaN(secondsNum)) return null;
+  
+  // Convert to minutes with 1 decimal place
+  const minutes = (secondsNum / 60).toFixed(1);
+  return parseFloat(minutes);
+}
+
+// Function to call Gemini API for intelligent stop selection
+async function getIntelligentStops(places, origin, query) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key not available');
+  }
+  
+  // Prepare the prompt for Gemini
+  const prompt = `You are a travel assistant that helps drivers select the best places to stop along a route.  
+
+You will be given:
+- Start and end location, total route distance/time.
+- A list of candidate places (gas stations, restaurants, charging stations, rest areas, etc.), each with metadata such as:
+  - name, address, rating, userRatingCount, isOpen, detourTime (seconds), detourDistance (meters), directionsUri.
+
+Your task:
+1. Interpret the user's query intent:
+   - If user asks for "best overall stop" → choose top 1–3 places by balancing criteria.
+   - If user specifies "stops along the way on a long trip" → break the route into segments of ~30–45 minutes and suggest 1–3 good stops in each segment.
+   - If user asks for a specific type (e.g. coffee shops, EV chargers) → apply the same ranking logic to that type only.
+
+2. Ranking Criteria (order of importance):
+   a. Place must be open.  
+   b. Lowest detour time/distance.  
+   c. Higher rating.  
+   d. More user ratings (reliability).  
+   e. (Optional) Price level if provided.  
+
+3. Select the best candidates based on the above.
+
+4. Provide a **structured JSON response** in this format:
+
+{
+  "stopsPlan": [
+    {
+      "segment": "0–45 min",
+      "recommendedPlaces": [
+        {
+          "name": "...",
+          "address": "...",
+          "rating": 4.2,
+          "userRatingCount": 150,
+          "detourTimeMinutes": 6.5,
+          "detourDistanceKm": 2.3,
+          "directionsUri": "...",
+          "reasoning": "Shortest detour with good rating and many reviews."
+        }
+      ]
+    },
+    {
+      "segment": "45–90 min",
+      "recommendedPlaces": [...]
+    }
+  ]
+}
+
+5. Only output valid JSON. No extra text.
+
+origin location: ${origin.latitude}, ${origin.longitude}
+stops list: ${JSON.stringify(places, null, 2)}`;
+
+  try {
+    console.log('Sending request to Gemini API...');
+    
+    const response = await axios.post('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
+      contents: [{
+        parts: [{
+          text: prompt
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        topK: 1,
+        topP: 1,
+        maxOutputTokens: 2048,
+      }
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': GEMINI_API_KEY
+      }
+    });
+    
+    console.log('Gemini API response received');
+    
+    if (response.data && response.data.candidates && response.data.candidates[0] && response.data.candidates[0].content) {
+      const geminiResponse = response.data.candidates[0].content.parts[0].text;
+      console.log('Gemini response text:', geminiResponse);
+      
+      // Try to extract JSON from the response
+      const jsonMatch = geminiResponse.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const jsonResponse = JSON.parse(jsonMatch[0]);
+        console.log('Successfully parsed Gemini JSON response');
+        return jsonResponse;
+      } else {
+        console.log('No valid JSON found in Gemini response');
+        return null;
+      }
+    } else {
+      console.log('Invalid Gemini API response structure');
+      return null;
+    }
+    
+  } catch (error) {
+    console.error('Error calling Gemini API:', error.message);
+    if (error.response) {
+      console.error('Gemini API error response:', error.response.data);
+    }
+    throw error;
+  }
+}
 
 // Serve the main frontend page
 app.get('/', (req, res) => {
@@ -340,6 +474,7 @@ app.post('/api/places/search', async (req, res) => {
         let detourTime = null;
         let detourDistance = null;
         let directionsUri = null;
+        let detourTimeMinutes = null;
         
         if (routingSummary && routingSummary.legs && routingSummary.legs.length > 0) {
           const leg = routingSummary.legs[0];
@@ -347,7 +482,10 @@ app.post('/api/places/search', async (req, res) => {
           detourDistance = leg.distanceMeters || null;
           directionsUri = routingSummary.directionsUri || null;
           
-          console.log(`Place ${index + 1}: ${place.displayName?.text || 'Unknown'} - Detour: ${detourTime} (${detourDistance}m)`);
+          // Convert detour time to minutes
+          detourTimeMinutes = convertSecondsToMinutes(detourTime);
+          
+          console.log(`Place ${index + 1}: ${place.displayName?.text || 'Unknown'} - Detour: ${detourTime} (${detourDistance}m) - ${detourTimeMinutes} minutes`);
         }
         
         return {
@@ -364,17 +502,32 @@ app.post('/api/places/search', async (req, res) => {
           detourTime: detourTime,
           detourDistance: detourDistance,
           detourDistanceFormatted: detourDistance ? `${(detourDistance / 1000).toFixed(1)} km` : null,
+          detourTimeMinutes: detourTimeMinutes,
           directionsUri: directionsUri
         };
       });
       
       console.log(`Processed ${places.length} places with routing summaries`);
       
+      // If Gemini API is available, use it for intelligent stop selection
+      let intelligentStops = null;
+      if (GEMINI_API_KEY) {
+        try {
+          console.log('Calling Gemini API for intelligent stop selection...');
+          intelligentStops = await getIntelligentStops(places, routingOrigin, textQuery);
+          console.log('Gemini API response received for intelligent stop selection');
+        } catch (error) {
+          console.error('Error calling Gemini API:', error.message);
+          console.log('Falling back to showing all places');
+        }
+      }
+      
       res.json({
         query: textQuery,
         totalResults: places.length,
         origin: routingOrigin,
-        places: places
+        places: places,
+        intelligentStops: intelligentStops
       });
       
     } else {
@@ -383,7 +536,8 @@ app.post('/api/places/search', async (req, res) => {
         query: textQuery,
         totalResults: 0,
         origin: routingOrigin,
-        places: []
+        places: [],
+        intelligentStops: null
       });
     }
     
