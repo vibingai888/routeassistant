@@ -6,6 +6,10 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 require('dotenv').config();
 
+// Route Assistant Backend Server
+// Uses Google Maps Routes API for route computation and Google Places API for location search
+// Routes API provides more accurate traffic-aware routing compared to the legacy Directions API
+
 console.log('Starting Route Assistant Backend Server...');
 
 const app = express();
@@ -63,7 +67,7 @@ if (!GEMINI_API_KEY) {
   console.log('Gemini API key loaded successfully');
 }
 
-console.log('Google Maps API key loaded successfully');
+console.log('Google Maps API key loaded successfully (will be used for Routes API)');
 
 // Helper function to convert seconds to approximate minutes
 function convertSecondsToMinutes(seconds) {
@@ -252,7 +256,7 @@ app.post('/api/route', async (req, res) => {
   console.log('Route planning request received:', req.body);
   
   try {
-    const { origin, destination, mode = 'driving' } = req.body;
+    const { origin, destination, mode = 'DRIVE' } = req.body;
     
     // Validate input
     if (!origin || !destination) {
@@ -264,52 +268,86 @@ app.post('/api/route', async (req, res) => {
     
     console.log(`Planning route from ${origin} to ${destination} using ${mode} mode`);
     
-    // Call Google Maps Directions API
-    const response = await axios.get('https://maps.googleapis.com/maps/api/directions/json', {
-      params: {
-        origin: origin,
-        destination: destination,
-        mode: mode,
-        key: GOOGLE_MAPS_API_KEY
+    // Convert mode to Routes API format
+    const travelMode = mode === 'driving' ? 'DRIVE' : 
+                      mode === 'walking' ? 'WALK' : 
+                      mode === 'bicycling' ? 'BICYCLE' : 
+                      mode === 'transit' ? 'TRANSIT' : 'DRIVE';
+    
+    // Prepare request payload for Routes API
+    const requestPayload = {
+      origin: {
+        location: {
+          latLng: {
+            latitude: parseFloat(origin.split(',')[0]),
+            longitude: parseFloat(origin.split(',')[1])
+          }
+        }
+      },
+      destination: {
+        location: {
+          latLng: {
+            latitude: parseFloat(destination.split(',')[0]),
+            longitude: parseFloat(destination.split(',')[1])
+          }
+        }
+      },
+      travelMode: travelMode,
+      routingPreference: "TRAFFIC_AWARE",
+      computeAlternativeRoutes: false,
+      polylineQuality: "OVERVIEW"
+    };
+    
+    console.log('Calling Google Routes API with payload:', JSON.stringify(requestPayload, null, 2));
+    
+    // Call Google Routes API
+    const response = await axios.post('https://routes.googleapis.com/directions/v2:computeRoutes', requestPayload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs,routes.bounds,routes.viewport,routes.travelAdvisory'
       }
     });
     
-    console.log('Google Maps API response received');
+    console.log('Google Routes API response received');
     
     const data = response.data;
     
-    if (data.status === 'OK') {
+    if (data.routes && data.routes.length > 0) {
       console.log('Route found successfully');
+      console.log('Route data structure:', JSON.stringify(route, null, 2));
       
-      // Extract route information
+      // Extract route information from Routes API response
       const route = data.routes[0];
-      const legs = route.legs[0];
+      const leg = route.legs[0];
+      console.log('Leg data structure:', JSON.stringify(leg, null, 2));
       
       const routeInfo = {
-        origin: legs.start_address,
-        destination: legs.end_address,
-        distance: legs.distance.text,
-        duration: legs.duration.text,
-        durationInSeconds: legs.duration.value,
-        distanceInMeters: legs.distance.value,
-        mode: mode,
-        steps: legs.steps.map(step => ({
-          instruction: step.html_instructions.replace(/<[^>]*>/g, ''),
-          distance: step.distance.text,
-          duration: step.duration.text
-        })),
-        polyline: route.overview_polyline.points,
-        bounds: route.bounds
+        origin: `${leg.startLocation.latLng.latitude},${leg.startLocation.latLng.longitude}`,
+        destination: `${leg.endLocation.latLng.latitude},${leg.endLocation.latLng.longitude}`,
+        distance: `${(route.distanceMeters / 1000).toFixed(1)} km`,
+        duration: `${Math.round(route.duration.replace('s', '') / 60)} mins`,
+        durationInSeconds: parseInt(route.duration.replace('s', '')),
+        distanceInMeters: route.distanceMeters,
+        mode: travelMode.toLowerCase(),
+        steps: leg.steps ? leg.steps.map(step => ({
+          instruction: step.navigationInstruction?.instructions || 'Continue',
+          distance: `${(step.staticDuration / 1000).toFixed(1)} km`,
+          duration: `${Math.round(step.staticDuration / 60)} mins`
+        })) : [],
+        polyline: route.polyline.encodedPolyline,
+        bounds: route.bounds,
+        viewport: route.viewport
       };
       
       console.log(`Route details: ${routeInfo.distance} in ${routeInfo.duration}`);
       res.json(routeInfo);
       
     } else {
-      console.log(`Google Maps API error: ${data.status}`);
+      console.log('No routes found in Routes API response');
       res.status(400).json({ 
-        error: `Route not found: ${data.status}`,
-        details: data.error_message || 'Unknown error'
+        error: 'Route not found',
+        details: 'No routes returned from Google Routes API'
       });
     }
     
@@ -317,9 +355,9 @@ app.post('/api/route', async (req, res) => {
     console.error('Error in route planning:', error.message);
     
     if (error.response) {
-      console.error('Google Maps API error response:', error.response.data);
+      console.error('Google Routes API error response:', error.response.data);
       res.status(error.response.status).json({
-        error: 'Google Maps API error',
+        error: 'Google Routes API error',
         details: error.response.data
       });
     } else {
@@ -336,7 +374,7 @@ app.post('/api/route/waypoints', async (req, res) => {
   console.log('Route with waypoints request received:', req.body);
   
   try {
-    const { origin, destination, waypoints = [], mode = 'driving' } = req.body;
+    const { origin, destination, waypoints = [], mode = 'DRIVE' } = req.body;
     
     if (!origin || !destination) {
       console.log('Invalid request: Missing origin or destination');
@@ -347,50 +385,93 @@ app.post('/api/route/waypoints', async (req, res) => {
     
     console.log(`Planning route with ${waypoints.length} waypoints from ${origin} to ${destination}`);
     
-    const response = await axios.get('https://maps.googleapis.com/maps/api/directions/json', {
-      params: {
-        origin: origin,
-        destination: destination,
-        waypoints: waypoints.join('|'),
-        mode: mode,
-        key: GOOGLE_MAPS_API_KEY
+    // Convert mode to Routes API format
+    const travelMode = mode === 'driving' ? 'DRIVE' : 
+                      mode === 'walking' ? 'WALK' : 
+                      mode === 'bicycling' ? 'BICYCLE' : 
+                      mode === 'transit' ? 'TRANSIT' : 'DRIVE';
+    
+    // Prepare request payload for Routes API with waypoints
+    const requestPayload = {
+      origin: {
+        location: {
+          latLng: {
+            latitude: parseFloat(origin.split(',')[0]),
+            longitude: parseFloat(origin.split(',')[1])
+          }
+        }
+      },
+      destination: {
+        location: {
+          latLng: {
+            latitude: parseFloat(destination.split(',')[0]),
+            longitude: parseFloat(destination.split(',')[1])
+          }
+        }
+      },
+      travelMode: travelMode,
+      routingPreference: "TRAFFIC_AWARE",
+      computeAlternativeRoutes: false,
+      polylineQuality: "OVERVIEW"
+    };
+    
+    // Add intermediate waypoints if provided
+    if (waypoints.length > 0) {
+      requestPayload.intermediates = waypoints.map(waypoint => ({
+        location: {
+          latLng: {
+            latitude: parseFloat(waypoint.split(',')[0]),
+            longitude: parseFloat(waypoint.split(',')[1])
+          }
+        }
+      }));
+    }
+    
+    console.log('Calling Google Routes API with waypoints payload:', JSON.stringify(requestPayload, null, 2));
+    
+    // Call Google Routes API
+    const response = await axios.post('https://routes.googleapis.com/directions/v2:computeRoutes', requestPayload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs,routes.bounds,routes.viewport,routes.travelAdvisory'
       }
     });
     
-    console.log('Google Maps API response received for waypoints route');
+    console.log('Google Routes API response received for waypoints route');
     
     const data = response.data;
     
-    if (data.status === 'OK') {
+    if (data.routes && data.routes.length > 0) {
       console.log('Route with waypoints found successfully');
       
       const route = data.routes[0];
       const legs = route.legs;
       
       const routeInfo = {
-        origin: legs[0].start_address,
-        destination: legs[legs.length - 1].end_address,
+        origin: `${legs[0].startLocation.latLng.latitude},${legs[0].startLocation.latLng.longitude}`,
+        destination: `${legs[legs.length - 1].endLocation.latLng.latitude},${legs[legs.length - 1].endLocation.latLng.longitude}`,
         waypoints: waypoints,
-        totalDistance: legs.reduce((sum, leg) => sum + leg.distance.value, 0),
-        totalDuration: legs.reduce((sum, leg) => sum + leg.duration.value, 0),
-        mode: mode,
+        totalDistance: route.distanceMeters,
+        totalDuration: parseInt(route.duration.replace('s', '')),
+        mode: travelMode.toLowerCase(),
         legs: legs.map(leg => ({
-          start: leg.start_address,
-          end: leg.end_address,
-          distance: leg.distance.text,
-          duration: leg.duration.text
+          start: `${leg.startLocation.latLng.latitude},${leg.startLocation.latLng.longitude}`,
+          end: `${leg.endLocation.latLng.latitude},${leg.endLocation.latLng.longitude}`,
+          distance: `${(leg.staticDuration / 1000).toFixed(1)} km`,
+          duration: `${Math.round(leg.staticDuration / 60)} mins`
         })),
-        polyline: route.overview_polyline.points
+        polyline: route.polyline.encodedPolyline
       };
       
       console.log(`Multi-leg route: ${(routeInfo.totalDistance / 1000).toFixed(1)}km in ${Math.round(routeInfo.totalDuration / 60)}min`);
       res.json(routeInfo);
       
     } else {
-      console.log(`Google Maps API error for waypoints: ${data.status}`);
+      console.log('No routes found in Routes API response for waypoints');
       res.status(400).json({ 
-        error: `Route not found: ${data.status}`,
-        details: data.error_message || 'Unknown error'
+        error: 'Route not found',
+        details: 'No routes returned from Google Routes API'
       });
     }
     
@@ -399,7 +480,7 @@ app.post('/api/route/waypoints', async (req, res) => {
     
     if (error.response) {
       res.status(error.response.status).json({
-        error: 'Google Maps API error',
+        error: 'Google Routes API error',
         details: error.response.data
       });
     } else {
@@ -657,8 +738,8 @@ if (process.env.NODE_ENV !== 'test') {
   server = app.listen(PORT, () => {
     console.log(`🚀 Route Assistant Backend Server running on port ${PORT}`);
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
-    console.log(`🗺️  Route planning: http://localhost:${PORT}/api/route`);
-    console.log(`🔄 Route with waypoints: http://localhost:${PORT}/api/route/waypoints`);
+    console.log(`🗺️  Route planning (Routes API): http://localhost:${PORT}/api/route`);
+    console.log(`🔄 Route with waypoints (Routes API): http://localhost:${PORT}/api/route/waypoints`);
     console.log(`⛽ Places search along route: http://localhost:${PORT}/api/places/search`);
   });
 }

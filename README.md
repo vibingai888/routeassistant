@@ -1,6 +1,6 @@
 # Route Assistant Backend
 
-A Node.js backend service that integrates with the Google Maps API to provide routing between locations. This service offers comprehensive route planning with support for waypoints, multiple transportation modes, and detailed turn-by-turn directions.
+A Node.js backend service that integrates with the Google Maps Platform to provide routing between locations. This service uses the modern Google Routes API for comprehensive route planning with support for waypoints, multiple transportation modes, and detailed turn-by-turn directions.
 
 ## Features
 
@@ -16,7 +16,7 @@ A Node.js backend service that integrates with the Google Maps API to provide ro
 ## Prerequisites
 
 - Node.js (v14 or higher)
-- Google Maps API key with Directions API enabled
+- Google Maps API key with Routes API enabled
 
 ## Setup
 
@@ -46,7 +46,7 @@ A Node.js backend service that integrates with the Google Maps API to provide ro
 4. **Get Google Maps API Key**
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
    - Create a new project or select existing one
-   - Enable the Directions API
+   - Enable the Routes API
    - Create credentials (API Key)
    - Add the API key to your `.env` file
 
@@ -248,7 +248,7 @@ routeassistant/
 
 1. **"GOOGLE_MAPS_API_KEY environment variable is required"**
    - Make sure you have a `.env` file with your API key
-   - Verify the API key is valid and has Directions API enabled
+   - Verify the API key is valid and has Routes API enabled
 
 2. **"Route not found" errors**
    - Check that your origin and destination are valid locations
