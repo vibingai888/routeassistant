@@ -477,13 +477,34 @@ app.post('/api/places/search', async (req, res) => {
     
     // If this is a segment-based search, adjust parameters for better diversity
     if (segment !== null && segmentInfo) {
-      console.log(`Segment-based search for segment ${segment}: ${segmentInfo.startTimeFormatted}`);
-      
-      // Adjust max results for segments to ensure variety
-      searchPayload.maxResultCount = Math.max(maxResultCount, 15);
-      
-      // Add segment context to help with diversity
-      searchPayload.textQuery = `${textQuery} ${segmentInfo.startTimeFormatted} segment`;
+        console.log(`Segment-based search for segment ${segment}: ${segmentInfo.startTimeFormatted}`);
+        
+        // Adjust max results for segments to ensure variety
+        searchPayload.maxResultCount = Math.max(maxResultCount, 20);
+        
+        // Add segment context to help with diversity
+        searchPayload.textQuery = `${textQuery} ${segmentInfo.startTimeFormatted} segment`;
+        
+        // Add location bias to focus on different areas for different segments
+        if (segmentInfo.startTime && segmentInfo.endTime) {
+            // Calculate a rough location along the route for this segment
+            const segmentProgress = (segmentInfo.startTime + segmentInfo.endTime) / 2;
+            const totalDuration = 14138; // This should be passed from frontend or calculated
+            
+            // Add location bias to focus on different areas
+            searchPayload.locationBias = {
+                circle: {
+                    center: {
+                        latitude: 37.4219 + (segmentProgress / totalDuration) * 0.5, // Rough approximation
+                        longitude: -122.0841 + (segmentProgress / totalDuration) * 0.3
+                    },
+                    radius: 50000.0 // 50km radius
+                }
+            };
+        }
+    } else {
+        // For non-segment searches, request more results to get better variety
+        searchPayload.maxResultCount = Math.max(maxResultCount, 30);
     }
     
     console.log('Calling Google Places API Text Search (New) with routing parameters...');

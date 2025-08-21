@@ -600,8 +600,12 @@ async function searchGasStationsBySegments(encodedPolyline, originCoords, totalD
 function distributePlacesAcrossSegments(places, segments, totalDurationSeconds) {
     console.log('Distributing places across segments based on detour time...');
     
+    // First, deduplicate places to avoid showing the same gas station multiple times
+    const uniquePlaces = deduplicatePlaces(places);
+    console.log(`Deduplicated ${places.length} places to ${uniquePlaces.length} unique places`);
+    
     // Sort places by detour time (ascending)
-    const sortedPlaces = [...places].sort((a, b) => {
+    const sortedPlaces = [...uniquePlaces].sort((a, b) => {
         const timeA = a.detourTimeMinutes || 0;
         const timeB = b.detourTimeMinutes || 0;
         return timeA - timeB;
@@ -613,26 +617,98 @@ function distributePlacesAcrossSegments(places, segments, totalDurationSeconds) 
         placesBySegment[segment.index] = [];
     });
     
-    // Distribute places across segments
+    // Calculate target places per segment for even distribution
+    const targetPlacesPerSegment = Math.ceil(sortedPlaces.length / segments.length);
+    console.log(`Target places per segment: ${targetPlacesPerSegment}`);
+    
+    // Distribute places across segments more intelligently
     sortedPlaces.forEach((place, index) => {
-        // Calculate which segment this place should belong to based on detour time
         const detourTimeMinutes = place.detourTimeMinutes || 0;
-        const segmentIndex = Math.min(
-            Math.floor((detourTimeMinutes / (totalDurationSeconds / 60)) * segments.length),
-            segments.length - 1
-        );
+        
+        // Calculate which segment this place should belong to based on detour time
+        // Use a more sophisticated distribution algorithm
+        let segmentIndex = 0;
+        
+        if (detourTimeMinutes > 0) {
+            // Calculate segment based on detour time relative to total route duration
+            const timeRatio = detourTimeMinutes / (totalDurationSeconds / 60);
+            segmentIndex = Math.min(
+                Math.floor(timeRatio * segments.length),
+                segments.length - 1
+            );
+        } else {
+            // If no detour time, distribute evenly
+            segmentIndex = index % segments.length;
+        }
         
         // Ensure we don't exceed segment capacity
         const targetSegment = Math.min(segmentIndex, segments.length - 1);
-        placesBySegment[targetSegment].push(place);
         
-        console.log(`Place "${place.name}" (${detourTimeMinutes} min detour) → Segment ${targetSegment + 1}`);
+        // Check if this segment already has enough places
+        if (placesBySegment[targetSegment].length >= targetPlacesPerSegment) {
+            // Find a segment with fewer places
+            let alternativeSegment = targetSegment;
+            let minPlaces = placesBySegment[targetSegment].length;
+            
+            for (let i = 0; i < segments.length; i++) {
+                if (placesBySegment[i].length < minPlaces) {
+                    minPlaces = placesBySegment[i].length;
+                    alternativeSegment = i;
+                }
+            }
+            
+            // Use the alternative segment if it has room
+            if (placesBySegment[alternativeSegment].length < targetPlacesPerSegment) {
+                placesBySegment[alternativeSegment].push(place);
+                console.log(`Place "${place.name}" (${detourTimeMinutes} min detour) → Segment ${alternativeSegment + 1} (alternative)`);
+            } else {
+                // If all segments are full, find the one with the least places
+                let leastPopulatedSegment = 0;
+                let leastPlaces = placesBySegment[0].length;
+                
+                for (let i = 1; i < segments.length; i++) {
+                    if (placesBySegment[i].length < leastPlaces) {
+                        leastPlaces = placesBySegment[i].length;
+                        leastPopulatedSegment = i;
+                    }
+                }
+                
+                placesBySegment[leastPopulatedSegment].push(place);
+                console.log(`Place "${place.name}" (${detourTimeMinutes} min detour) → Segment ${leastPopulatedSegment + 1} (least populated)`);
+            }
+        } else {
+            // Segment has room, add the place
+            placesBySegment[targetSegment].push(place);
+            console.log(`Place "${place.name}" (${detourTimeMinutes} min detour) → Segment ${targetSegment + 1}`);
+        }
     });
     
-    // Balance segments if some have too many or too few places
+    // Balance segments for more even distribution
     balanceSegments(placesBySegment, segments);
     
     return placesBySegment;
+}
+
+// Function to deduplicate places based on name and address
+function deduplicatePlaces(places) {
+    console.log('Deduplicating places to remove duplicates...');
+    
+    const uniquePlaces = [];
+    const seenPlaces = new Set();
+    
+    places.forEach(place => {
+        // Create a unique key based on name and address
+        const placeKey = `${place.name}-${place.address}`.toLowerCase().replace(/\s+/g, ' ').trim();
+        
+        if (!seenPlaces.has(placeKey)) {
+            seenPlaces.add(placeKey);
+            uniquePlaces.push(place);
+        } else {
+            console.log(`Duplicate place removed: ${place.name} at ${place.address}`);
+        }
+    });
+    
+    return uniquePlaces;
 }
 
 // Function to balance segments for more even distribution
@@ -649,10 +725,12 @@ function balanceSegments(placesBySegment, segments) {
     for (let i = 0; i < segments.length; i++) {
         const currentCount = placesBySegment[i].length;
         
-        if (currentCount > avgCount + 2) {
+        if (currentCount > avgCount + 1) {
             // This segment has too many places
             const excess = currentCount - avgCount;
             const placesToMove = placesBySegment[i].splice(-excess);
+            
+            console.log(`Segment ${i + 1} has ${excess} excess places, moving them...`);
             
             // Find segments that need more places
             for (let j = 0; j < segments.length && placesToMove.length > 0; j++) {
@@ -660,6 +738,31 @@ function balanceSegments(placesBySegment, segments) {
                     const placesNeeded = avgCount - placesBySegment[j].length;
                     const placesToAdd = placesToMove.splice(0, placesNeeded);
                     placesBySegment[j].push(...placesToAdd);
+                    
+                    console.log(`  Moved ${placesToAdd.length} places to Segment ${j + 1}`);
+                }
+            }
+            
+            // If we still have places to move, distribute them to the least populated segments
+            if (placesToMove.length > 0) {
+                console.log(`  Still have ${placesToMove.length} places to distribute...`);
+                
+                while (placesToMove.length > 0) {
+                    // Find the segment with the least places
+                    let leastPopulatedSegment = 0;
+                    let leastPlaces = placesBySegment[0].length;
+                    
+                    for (let k = 1; k < segments.length; k++) {
+                        if (placesBySegment[k].length < leastPlaces) {
+                            leastPlaces = placesBySegment[k].length;
+                            leastPopulatedSegment = k;
+                        }
+                    }
+                    
+                    // Add one place to the least populated segment
+                    const placeToMove = placesToMove.pop();
+                    placesBySegment[leastPopulatedSegment].push(placeToMove);
+                    console.log(`  Moved "${placeToMove.name}" to Segment ${leastPopulatedSegment + 1}`);
                 }
             }
         }
@@ -667,33 +770,81 @@ function balanceSegments(placesBySegment, segments) {
     
     const finalCounts = Object.values(placesBySegment).map(places => places.length);
     console.log('Segment distribution after balancing:', finalCounts);
+    
+    // Log final distribution summary
+    const minPlaces = Math.min(...finalCounts);
+    const maxPlaces = Math.max(...finalCounts);
+    const distributionSpread = maxPlaces - minPlaces;
+    
+    console.log(`Final distribution: Min ${minPlaces}, Max ${maxPlaces}, Spread ${distributionSpread}`);
+    
+    if (distributionSpread <= 2) {
+        console.log('✅ Good segment balance achieved!');
+    } else if (distributionSpread <= 4) {
+        console.log('⚠️  Moderate segment balance - some segments may have more places');
+    } else {
+        console.log('❌ Poor segment balance - significant variation between segments');
+    }
 }
 
 // Function to combine intelligent stops from multiple segments
 function combineIntelligentStopsFromSegments(segmentResults) {
     console.log('Combining intelligent stops from multiple segments...');
     
-    const combinedStops = {
-        stopsPlan: []
-    };
+    if (!segmentResults || segmentResults.length === 0) {
+        return null;
+    }
     
-    segmentResults.forEach(segmentResult => {
+    // Create a combined stops plan
+    const combinedStopsPlan = [];
+    const seenPlaces = new Set(); // Track places we've already recommended
+    
+    segmentResults.forEach((segmentResult, segmentIndex) => {
         if (segmentResult.intelligentStops && segmentResult.intelligentStops.stopsPlan) {
             segmentResult.intelligentStops.stopsPlan.forEach(segment => {
-                // Update segment name to include time range
-                const updatedSegment = {
-                    ...segment,
-                    segment: `${segmentResult.segment.startTimeFormatted} - ${segmentResult.segment.endTimeFormatted}`,
-                    segmentIndex: segmentResult.segment.index
+                // Create a new segment entry for this route segment
+                const newSegment = {
+                    segment: segmentResult.segment.startTimeFormatted,
+                    recommendedPlaces: []
                 };
                 
-                combinedStops.stopsPlan.push(updatedSegment);
+                // Add recommended places, avoiding duplicates
+                if (segment.recommendedPlaces) {
+                    segment.recommendedPlaces.forEach(place => {
+                        // Create a unique key for this place
+                        const placeKey = `${place.name}-${place.address}`.toLowerCase().replace(/\s+/g, ' ').trim();
+                        
+                        if (!seenPlaces.has(placeKey)) {
+                            seenPlaces.add(placeKey);
+                            
+                            // Add segment information to the place
+                            const placeWithSegment = {
+                                ...place,
+                                segmentInfo: segmentResult.segment,
+                                segmentTimeRange: segmentResult.segment.startTimeFormatted
+                            };
+                            
+                            newSegment.recommendedPlaces.push(placeWithSegment);
+                        } else {
+                            console.log(`Skipping duplicate AI recommendation: ${place.name} (already recommended in another segment)`);
+                        }
+                    });
+                }
+                
+                // Only add the segment if it has recommended places
+                if (newSegment.recommendedPlaces.length > 0) {
+                    combinedStopsPlan.push(newSegment);
+                }
             });
         }
     });
     
-    console.log(`Combined ${combinedStops.stopsPlan.length} segments with intelligent stops`);
-    return combinedStops;
+    console.log(`Combined ${segmentResults.length} segments with intelligent stops`);
+    console.log(`Total unique AI recommendations: ${combinedStopsPlan.reduce((sum, seg) => sum + seg.recommendedPlaces.length, 0)}`);
+    
+    return {
+        stopsPlan: combinedStopsPlan
+    };
 }
 
 // Function to display gas stations on the map
